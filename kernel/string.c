@@ -1,3 +1,4 @@
+
 #include "types.h"
 
 void*
@@ -35,7 +36,7 @@ memmove(void *dst, const void *src, uint n)
 
   if(n == 0)
     return dst;
-  
+
   s = src;
   d = dst;
   if(s < d && s + n > d){
@@ -104,4 +105,3 @@ strlen(const char *s)
     ;
   return n;
 }
-

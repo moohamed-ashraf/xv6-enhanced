@@ -11,5 +11,11 @@
     "editor.trimAutoWhitespace": true,
     "files.trimTrailingWhitespace": true,
     "files.trimFinalNewlines": true,
-    "files.insertFinalNewline": true
+    "files.insertFinalNewline": true,
+    "files.associations": {
+        "types.h": "c",
+        "typeinfo": "c",
+        "datetime.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }

@@ -1,4 +1,7 @@
+#include "kernel/datetime.h"
+#include "kernel/types.h"
 struct stat;
+struct avg_t;
 
 // system calls
 int fork(void);
@@ -22,6 +25,15 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int getptable(int nproc, char *buffer);
+int kbdint();
+int countsyscall(void);
+int getppid(void);
+int sysrand(void);
+int datetime(struct datetime*);
+int schedtest(int mode); 
+int getavgt(struct avg_t *a); 
+int setpriority(int);
 
 // ulib.c
 int stat(const char*, struct stat*);

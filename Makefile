@@ -28,7 +28,8 @@ OBJS = \
   $K/sysfile.o \
   $K/kernelvec.o \
   $K/plic.o \
-  $K/virtio_disk.o
+  $K/virtio_disk.o\
+  $K/sysutil.o\
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -57,6 +58,8 @@ OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
+CFLAGS += -DBOOT_EPOCH=$(shell date +%s)
+
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 # CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
@@ -139,6 +142,26 @@ UPROGS=\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
+	$U/_add\
+	$U/_sleep\
+	$U/_find\
+	$U/_touch\
+	$U/_mv\
+	$U/_cp\
+	$U/_fact\
+	$U/_kbdint\
+	$U/_countsyscall\
+	$U/_getppid\
+	$U/_sysrand\
+	$U/_datetime\
+	$U/_ps\
+	$U/_schedtest\
+
+
+
+
+
+
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

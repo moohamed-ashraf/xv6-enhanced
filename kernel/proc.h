@@ -1,4 +1,14 @@
 // Saved registers for kernel context switches.
+//////////////////////////////nm
+
+// schedular constants to set the scheduling mode
+#define SCHED_ROUND_ROBIN 0
+#define SCHED_FCFS        1
+#define SCHED_PRIORITY    2
+
+extern int sched_mode;  // Declare global scheduler mode
+
+//////////////////////////////nm
 struct context {
   uint64 ra;
   uint64 sp;
@@ -84,6 +94,7 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 // Per-process state
 struct proc {
   struct spinlock lock;
+  uint64 ctime; // creation time
 
   // p->lock must be held when using these:
   enum procstate state;        // Process state
@@ -103,5 +114,17 @@ struct proc {
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
-  char name[16];               // Process name (debugging)
+  char name[16];
+
+
+  int priority;                 // Lower value => higher priority///////////////pr
+  uint creation_time;          // Ticks when process was created
+  uint run_time;               // How long the process has run
+  uint wait_time;              // How long the process has been waiting
+  uint turnaround_time;        // How long the process has been sleeping
+  uint rtime;                 // Running time
+  uint waiting_time;         // Waiting time
+  uint ticks;                // Ticks when process was created
+  uint etime;                // Ticks when process was terminated
+  
 };

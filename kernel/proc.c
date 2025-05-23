@@ -5,6 +5,18 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+extern uint ticks;
+
+
+struct proc_info
+{
+  int pid;
+  int ppid;
+  int state;
+  uint64 sz;
+  char name[16];
+};
+
 
 struct cpu cpus[NCPU];
 
@@ -33,7 +45,7 @@ void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -48,7 +60,7 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
@@ -93,7 +105,7 @@ int
 allocpid()
 {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -101,7 +113,19 @@ allocpid()
 
   return pid;
 }
-
+static int p_random(void)
+{
+  static uint64 pseed;
+  // Use ticks as the changing seed
+  extern uint ticks;
+  acquire(&tickslock);
+  pseed = ticks;
+  release(&tickslock);
+  // Apply LCG
+  pseed = pseed * 1103515245 + 12345;
+  // Return number in range [0, 100]
+  return (pseed % 11);
+}
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -123,7 +147,10 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+
   p->state = USED;
+
+  // p->priority = 5;  // Default medium priority
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -131,6 +158,7 @@ found:
     release(&p->lock);
     return 0;
   }
+
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -146,6 +174,13 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+
+  p->ctime = ticks;
+  p->rtime = 0;
+  p->waiting_time=0;
+  p->turnaround_time=0;
+  p->priority = p_random();
+  printf("[pid=%d] assigned priority=%d\n", p->pid, p->priority); //for debugging
   return p;
 }
 
@@ -169,6 +204,11 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->ctime = ticks;
+  //printf ("total time : %u , running time: %u ,waiting time: %u  \n",p->turnaround_time,p->run_time,p->waiting_time);
+  p->rtime = 0;
+  p->waiting_time=0;
+  p->turnaround_time=0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -236,7 +276,7 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
+
   // allocate one user page and copy initcode's instructions
   // and data into it.
   uvmfirst(p->pagetable, initcode, sizeof(initcode));
@@ -343,6 +383,14 @@ reparent(struct proc *p)
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait().
+
+
+static uint total_wait    = 0;
+static uint total_turn    = 0;
+static uint total_run     = 0;
+static uint total_procs   = 0;
+
+
 void
 exit(int status)
 {
@@ -360,6 +408,11 @@ exit(int status)
     }
   }
 
+  p->etime = ticks;  // capture current ticks as end time
+
+
+  p->waiting_time = p->turnaround_time - p->rtime;
+
   begin_op();
   iput(p->cwd);
   end_op();
@@ -372,10 +425,19 @@ exit(int status)
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
-  
+
   acquire(&p->lock);
 
   p->xstate = status;
+
+
+
+
+  total_wait  += p->waiting_time;
+  total_turn  += p->turnaround_time;
+  total_run   += p->rtime;
+  total_procs ++;
+
   p->state = ZOMBIE;
 
   release(&wait_lock);
@@ -385,8 +447,9 @@ exit(int status)
   panic("zombie exit");
 }
 
-// Wait for a child process to exit and return its pid.
-// Return -1 if this process has no children.
+
+
+
 int
 wait(uint64 addr)
 {
@@ -417,6 +480,8 @@ wait(uint64 addr)
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
+          // printf("[pid=%d] terminated\n", pid);
+
           return pid;
         }
         release(&pp->lock);
@@ -428,11 +493,75 @@ wait(uint64 addr)
       release(&wait_lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &wait_lock);  //DOC: wait-sleep
   }
 }
+
+void update_time() {
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED) {
+      p->turnaround_time++;
+
+      if (p->state == RUNNING) {
+        p->rtime++;
+      }
+    }
+    release(&p->lock);
+  }
+}
+
+
+int sched_mode = 2;
+// int sched_mode = SCHED_PRIORITY;  //Assign the chosen scheduler here
+
+struct proc* choose_next_process()
+{
+  struct proc *p;
+  struct proc *chosen = 0;
+
+  if (sched_mode == SCHED_ROUND_ROBIN)
+  {
+    // Round-robin: return the first RUNNABLE process found
+    for (p = proc; p < &proc[NPROC]; p++) {
+      if (p->state == RUNNABLE)
+        return p;
+    }
+  }
+
+  else if (sched_mode == SCHED_FCFS)
+  {
+    for (p = proc; p < &proc[NPROC]; p++)
+    {
+      if (p->state != RUNNABLE)
+        continue;
+
+      if (chosen == 0 || p->ctime < chosen->ctime)
+          chosen = p;
+    }
+    return chosen;
+  }
+  else if (sched_mode == SCHED_PRIORITY)
+  {
+    for(p = proc; p < &proc[NPROC]; p++) {
+        if(p->state == RUNNABLE) {
+          if(!chosen || p->priority > chosen->priority || (p->priority == chosen->priority && p->ctime < chosen->ctime))
+          {
+            chosen = p;
+          }
+        }
+    }
+    return chosen;
+  }
+
+  return 0;
+}
+
+
+
 
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -448,19 +577,21 @@ scheduler(void)
   struct cpu *c = mycpu();
 
   c->proc = 0;
-  for(;;){
+  for(;;)           //infinte loop
+  {
     // The most recent process to run may have had interrupts
     // turned off; enable them to avoid a deadlock if all
     // processes are waiting.
     intr_on();
 
     int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
+
+    p = choose_next_process();
+
+    if(p != 0) {
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
+
+      if (p->state == RUNNABLE) {
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
@@ -472,7 +603,8 @@ scheduler(void)
       }
       release(&p->lock);
     }
-    if(found == 0) {
+    if(found == 0)
+    {
       // nothing to run; stop running on this core until an interrupt.
       intr_on();
       asm volatile("wfi");
@@ -548,7 +680,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -563,6 +695,9 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
+
+  //chan stands for channel — it's just a pointer (void *chan) used by the kernel to group and identify events or conditions that a process is waiting for.
+  //It’s not like a communication channel (like pipes); it’s just a label or tag for what the process is sleeping on.
   sched();
 
   // Tidy up.
@@ -627,7 +762,7 @@ int
 killed(struct proc *p)
 {
   int k;
-  
+
   acquire(&p->lock);
   k = p->killed;
   release(&p->lock);
@@ -692,4 +827,25 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int sys_getavgt(void)
+{
+    int user_ptr;      // pointer to user‐space struct
+    argint(0, &user_ptr);
+    // compute averages as integers
+    int aw = 0, at = 0, ar = 0;
+    if (total_procs > 0) {
+        aw = total_wait / total_procs;
+        at = total_turn / total_procs;
+        ar = total_run  / total_procs;
+
+
+    }
+
+    struct avg_t { int wait, turn, run; } a = { aw, at, ar };
+    if(copyout(myproc()->pagetable, user_ptr, (char*)&a, sizeof(a)) < 0)
+        return -1;
+
+    return 0;
 }
